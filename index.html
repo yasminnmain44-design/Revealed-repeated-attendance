@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>كشف التكرارات في الحضور - حذف السجلات المكررة</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: #f5f7fa; direction: rtl; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        .header { background: linear-gradient(135deg, #1a252f, #2c3e50); color: white; padding: 25px; border-radius: 16px; margin-bottom: 25px; }
+        .header h1 { font-size: 1.5rem; margin-bottom: 5px; }
+        
+        .filters { background: white; padding: 20px; border-radius: 16px; margin-bottom: 25px; display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .filter-group { flex: 1; min-width: 200px; }
+        .filter-group label { display: block; font-size: 0.8rem; color: #666; margin-bottom: 5px; }
+        .filter-group select, .filter-group input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; font-size: 0.9rem; }
+        
+        button { background: #3498db; color: white; border: none; padding: 10px 25px; border-radius: 10px; cursor: pointer; font-weight: bold; transition: all 0.2s; }
+        button:hover { background: #2980b9; transform: translateY(-1px); }
+        .btn-danger { background: #e74c3c; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-warning { background: #f39c12; }
+        .btn-success { background: #27ae60; }
+        
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .stat-card { background: white; padding: 20px; border-radius: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-top: 4px solid #3498db; }
+        .stat-number { font-size: 2rem; font-weight: bold; color: #2c3e50; }
+        .stat-number.warning { color: #e74c3c; }
+        .stat-label { color: #666; margin-top: 5px; }
+        
+        .card { background: white; border-radius: 16px; margin-bottom: 25px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .card-header { background: #2c3e50; color: white; padding: 15px 20px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .card-body { padding: 20px; overflow-x: auto; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 10px; text-align: center; border-bottom: 1px solid #e0e0e0; }
+        th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; }
+        tr:hover { background: #f8f9fa; }
+        
+        .duplicate-row { background: #fff3cd !important; border-right: 4px solid #f39c12; }
+        .duplicate-row:hover { background: #ffeaa7 !important; }
+        
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; }
+        .badge-duplicate { background: #f39c12; color: white; }
+        .badge-present { background: #d4edda; color: #155724; }
+        .badge-leave { background: #fff3cd; color: #856404; }
+        
+        .checkbox-col { width: 40px; text-align: center; }
+        input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+        
+        .duplicate-group { background: #fef3c7; border-radius: 12px; margin-bottom: 15px; padding: 10px; }
+        .duplicate-group-header { background: #f59e0b; color: white; padding: 8px 15px; border-radius: 10px; margin-bottom: 10px; font-weight: bold; }
+        
+        .action-bar { display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0; }
+        
+        .empty-state { text-align: center; padding: 50px; color: #999; }
+        
+        @media (max-width: 768px) { th, td { font-size: 0.7rem; padding: 8px 4px; } button { padding: 6px 12px; font-size: 0.7rem; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-clone"></i> كشف وتصحيح التكرارات في الحضور</h1>
+            <p>عرض جميع سجلات الحضور - تحديد التواريخ المكررة - حذف السجلات الخاطئة</p>
+        </div>
+
+        <div class="filters">
+            <div class="filter-group">
+                <label><i class="fas fa-user"></i> اختر الموظف</label>
+                <select id="employeeSelect">
+                    <option value="">-- جاري التحميل --</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label><i class="fas fa-calendar"></i> الشهر (اختياري)</label>
+                <input type="month" id="monthFilter">
+            </div>
+            <button id="loadBtn"><i class="fas fa-search"></i> عرض البيانات</button>
+            <button id="selectAllDuplicatesBtn" class="btn-warning" style="background:#f39c12;"><i class="fas fa-copy"></i> تحديد كل المكرر</button>
+            <button id="deleteSelectedBtn" class="btn-danger"><i class="fas fa-trash"></i> حذف المحدد</button>
+        </div>
+
+        <div class="stats" id="statsArea" style="display: none;">
+            <!-- Stats will appear here -->
+        </div>
+
+        <div id="resultsArea" style="display: none;">
+            <div class="card">
+                <div class="card-header">
+                    <span><i class="fas fa-list"></i> سجل الحضور الكامل</span>
+                    <span id="recordCount" style="background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 20px;">0 سجل</span>
+                </div>
+                <div class="card-body">
+                    <div style="overflow-x: auto;">
+                        <table id="attendanceTable">
+                            <thead>
+                                <tr>
+                                    <th class="checkbox-col"><input type="checkbox" id="selectAllCheckbox"></th>
+                                    <th>#</th>
+                                    <th>التاريخ</th>
+                                    <th>اليوم</th>
+                                    <th>الحالة</th>
+                                    <th>المحطة</th>
+                                    <th>المسؤول</th>
+                                    <th>وقت التسجيل</th>
+                                    <th>المعرف (ID)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="attendanceTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div class="action-bar">
+                        <button id="deleteSelectedBottomBtn" class="btn-danger"><i class="fas fa-trash"></i> حذف المحدد</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" id="duplicatesCard" style="display: none;">
+                <div class="card-header" style="background: #e67e22;">
+                    <span><i class="fas fa-clone"></i> 🔴 التواريخ المكررة (نفس اليوم مسجل أكثر من مرة)</span>
+                    <button id="deleteAllDuplicatesBtn" class="btn-danger" style="background:#c0392b;"><i class="fas fa-trash-alt"></i> حذف كل المكرر</button>
+                </div>
+                <div class="card-body" id="duplicatesContainer"></div>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div id="deleteModal" style="display: none; position: fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+            <div style="background:white; border-radius:16px; max-width:400px; width:90%;">
+                <div style="padding:20px; background:#e74c3c; color:white; border-radius:16px 16px 0 0;">
+                    <h3><i class="fas fa-exclamation-triangle"></i> تأكيد الحذف</h3>
+                </div>
+                <div style="padding:20px;" id="deleteModalMessage"></div>
+                <div style="padding:20px; display:flex; gap:10px; justify-content:flex-end; border-top:1px solid #eee;">
+                    <button onclick="closeDeleteModal()" style="background:#95a5a6;">إلغاء</button>
+                    <button id="confirmDeleteBtn" style="background:#e74c3c;">تأكيد الحذف</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDjImFc52SF5TlN7k7vz0H6-8bWl8Pkz0k",
+            authDomain: "haat-a88ee.firebaseapp.com",
+            databaseURL: "https://haat-a88ee-default-rtdb.firebaseio.com",
+            projectId: "haat-a88ee",
+            storageBucket: "haat-a88ee.appspot.com"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        let allEmployees = [];
+        let allAttendance = [];
+        let allSupervisors = [];
+        let currentAttendanceRecords = [];
+        let selectedRecordsToDelete = new Set();
+        let pendingDeleteIds = [];
+
+        // Load data from Firebase
+        async function loadInitialData() {
+            try {
+                const [empSnap, attSnap, supSnap] = await Promise.all([
+                    database.ref('employees').once('value'),
+                    database.ref('attendance').once('value'),
+                    database.ref('supervisors').once('value')
+                ]);
+                
+                allEmployees = Object.entries(empSnap.val() || {}).map(([id, d]) => ({ id, ...d }));
+                allAttendance = Object.entries(attSnap.val() || {}).map(([id, d]) => ({ id, ...d }));
+                allSupervisors = Object.entries(supSnap.val() || {}).map(([id, d]) => ({ id, ...d }));
+                
+                populateEmployeeSelect();
+            } catch(e) {
+                console.error(e);
+                alert('خطأ في تحميل البيانات: ' + e.message);
+            }
+        }
+
+        function populateEmployeeSelect() {
+            const select = document.getElementById('employeeSelect');
+            select.innerHTML = '<option value="">-- اختر موظف --</option>' + 
+                allEmployees.map(emp => `<option value="${emp.name}">${emp.name} (${emp.job || 'بدون وظيفة'})</option>`).join('');
+        }
+
+        async function loadEmployeeAttendance() {
+            const employeeName = document.getElementById('employeeSelect').value;
+            const monthFilter = document.getElementById('monthFilter').value;
+            
+            if (!employeeName) {
+                alert('يرجى اختيار موظف');
+                return;
+            }
+            
+            // Filter attendance for this employee
+            let filtered = allAttendance.filter(a => a.employeeName === employeeName);
+            
+            if (monthFilter) {
+                filtered = filtered.filter(a => a.date.startsWith(monthFilter));
+            }
+            
+            // Sort by date
+            filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
+            
+            currentAttendanceRecords = filtered;
+            displayAttendanceData(filtered);
+        }
+        
+        function displayAttendanceData(records) {
+            const resultsArea = document.getElementById('resultsArea');
+            const statsArea = document.getElementById('statsArea');
+            const tbody = document.getElementById('attendanceTableBody');
+            const recordCountSpan = document.getElementById('recordCount');
+            
+            if (records.length === 0) {
+                resultsArea.style.display = 'block';
+                statsArea.style.display = 'none';
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-state">لا توجد سجلات حضور لهذا الموظف</td></tr>';
+                recordCountSpan.innerText = '0 سجل';
+                document.getElementById('duplicatesCard').style.display = 'none';
+                return;
+            }
+            
+            resultsArea.style.display = 'block';
+            statsArea.style.display = 'grid';
+            
+            // Find duplicates (same date)
+            const dateMap = new Map();
+            records.forEach(record => {
+                if (!dateMap.has(record.date)) dateMap.set(record.date, []);
+                dateMap.get(record.date).push(record);
+            });
+            
+            // Mark duplicates
+            const duplicateDates = new Set();
+            dateMap.forEach((recs, date) => {
+                if (recs.length > 1) duplicateDates.add(date);
+            });
+            
+            // Calculate stats
+            const totalRecords = records.length;
+            const duplicateCount = Array.from(dateMap.values()).filter(recs => recs.length > 1).reduce((sum, recs) => sum + recs.length, 0);
+            const uniqueDays = dateMap.size;
+            const duplicateDatesList = Array.from(duplicateDates);
+            
+            // Display stats
+            statsArea.innerHTML = `
+                <div class="stat-card"><div class="stat-number">${totalRecords}</div><div class="stat-label">إجمالي سجلات الحضور</div></div>
+                <div class="stat-card"><div class="stat-number ${duplicateCount > 0 ? 'warning' : ''}">${duplicateCount}</div><div class="stat-label">سجلات مكررة</div></div>
+                <div class="stat-card"><div class="stat-number">${uniqueDays}</div><div class="stat-label">أيام فريدة</div></div>
+                <div class="stat-card"><div class="stat-number ${duplicateDatesList.length > 0 ? 'warning' : ''}">${duplicateDatesList.length}</div><div class="stat-label">تواريخ بها تكرار</div></div>
+            `;
+            
+            recordCountSpan.innerText = `${totalRecords} سجل`;
+            
+            // Build table
+            tbody.innerHTML = records.map((record, index) => {
+                const isDuplicate = duplicateDates.has(record.date);
+                const supervisor = allSupervisors.find(s => s.id === record.supervisorId);
+                const supervisorName = supervisor ? supervisor.employeeName : (record.supervisorName || 'غير معروف');
+                const dayName = new Date(record.date).toLocaleDateString('ar-AR', { weekday: 'long' });
+                
+                return `<tr class="${isDuplicate ? 'duplicate-row' : ''}" data-id="${record.id}" data-date="${record.date}">
+                    <td class="checkbox-col"><input type="checkbox" class="record-checkbox" value="${record.id}" data-date="${record.date}"></td>
+                    <td>${index + 1}</td>
+                    <td><strong>${record.date}</strong> ${isDuplicate ? '<span class="badge badge-duplicate">مكرر</span>' : ''}</td>
+                    <td>${dayName}</td>
+                    <td><span class="badge ${record.status === 'حاضر' ? 'badge-present' : 'badge-leave'}">${record.status}</span></td>
+                    <td>${record.stationName || 'غير محدد'}</td>
+                    <td>${supervisorName}</td>
+                    <td><i class="far fa-clock"></i> ${record.time || new Date(record.timestamp).toLocaleTimeString('ar-EG') || '-'}</td>
+                    <td style="font-size:0.7rem; color:#999;">${record.id.substring(0, 8)}...</td>
+                </tr>`;
+            }).join('');
+            
+            // Display duplicates grouped
+            displayDuplicatesGroups(dateMap);
+            
+            // Setup checkbox listeners
+            setupCheckboxListeners();
+            
+            // Update select all checkbox
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.onclick = (e) => {
+                    document.querySelectorAll('.record-checkbox').forEach(cb => cb.checked = e.target.checked);
+                    updateSelectedCount();
+                };
+            }
+        }
+        
+        function displayDuplicatesGroups(dateMap) {
+            const duplicatesContainer = document.getElementById('duplicatesContainer');
+            const duplicatesCard = document.getElementById('duplicatesCard');
+            
+            const duplicateGroups = [];
+            dateMap.forEach((records, date) => {
+                if (records.length > 1) {
+                    duplicateGroups.push({ date, records });
+                }
+            });
+            
+            if (duplicateGroups.length === 0) {
+                duplicatesCard.style.display = 'none';
+                return;
+            }
+            
+            duplicatesCard.style.display = 'block';
+            
+            duplicatesContainer.innerHTML = duplicateGroups.map(group => `
+                <div class="duplicate-group">
+                    <div class="duplicate-group-header">
+                        <i class="fas fa-calendar-day"></i> التاريخ: ${group.date} - ${new Date(group.date).toLocaleDateString('ar-AR', { weekday: 'long' })}
+                        <span style="float: left;">${group.records.length} سجل</span>
+                    </div>
+                    <table style="width:100%; font-size:0.85rem;">
+                        <thead><tr><th>اختيار</th><th>وقت التسجيل</th><th>المحطة</th><th>المسؤول</th><th>المعرف</th></tr></thead>
+                        <tbody>
+                            ${group.records.map(rec => {
+                                const supervisor = allSupervisors.find(s => s.id === rec.supervisorId);
+                                return `<tr>
+                                    <td><input type="checkbox" class="duplicate-checkbox" value="${rec.id}" data-date="${rec.date}"></td>
+                                    <td><i class="far fa-clock"></i> ${rec.time || '-'}</td>
+                                    <td>${rec.stationName || '-'}</td>
+                                    <td>${supervisor ? supervisor.employeeName : (rec.supervisorName || '-')}</td>
+                                    <td style="font-size:0.7rem;">${rec.id.substring(0, 8)}...</td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                    <div style="margin-top: 8px;">
+                        <button class="btn-warning btn-sm" onclick="selectDuplicatesForDate('${group.date}')" style="padding:4px 12px; font-size:0.7rem;">تحديد كل سجلات هذا اليوم</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function setupCheckboxListeners() {
+            document.querySelectorAll('.record-checkbox').forEach(cb => {
+                cb.onchange = () => updateSelectedCount();
+            });
+        }
+        
+        function updateSelectedCount() {
+            const selected = document.querySelectorAll('.record-checkbox:checked').length;
+            const deleteBtn = document.getElementById('deleteSelectedBtn');
+            if (deleteBtn) deleteBtn.innerHTML = `<i class="fas fa-trash"></i> حذف المحدد (${selected})`;
+            
+            const bottomBtn = document.getElementById('deleteSelectedBottomBtn');
+            if (bottomBtn) bottomBtn.innerHTML = `<i class="fas fa-trash"></i> حذف المحدد (${selected})`;
+        }
+        
+        window.selectDuplicatesForDate = (date) => {
+            document.querySelectorAll(`.record-checkbox[data-date="${date}"]`).forEach(cb => cb.checked = true);
+            document.querySelectorAll(`.duplicate-checkbox[data-date="${date}"]`).forEach(cb => cb.checked = true);
+            updateSelectedCount();
+        };
+        
+        document.getElementById('selectAllDuplicatesBtn').onclick = () => {
+            document.querySelectorAll('.record-checkbox').forEach(cb => {
+                const row = cb.closest('tr');
+                if (row && row.classList.contains('duplicate-row')) {
+                    cb.checked = true;
+                }
+            });
+            updateSelectedCount();
+        };
+        
+        function getSelectedRecordIds() {
+            const ids = [];
+            document.querySelectorAll('.record-checkbox:checked').forEach(cb => {
+                ids.push(cb.value);
+            });
+            return ids;
+        }
+        
+        function showDeleteModal(ids, message) {
+            pendingDeleteIds = ids;
+            const modal = document.getElementById('deleteModal');
+            const messageDiv = document.getElementById('deleteModalMessage');
+            messageDiv.innerHTML = message;
+            modal.style.display = 'flex';
+        }
+        
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').style.display = 'none';
+            pendingDeleteIds = [];
+        }
+        
+        async function executeDelete() {
+            if (pendingDeleteIds.length === 0) return;
+            
+            const loadingMsg = document.createElement('div');
+            loadingMsg.innerHTML = '<div style="text-align:center; padding:20px;"><i class="fas fa-spinner fa-spin"></i> جاري الحذف...</div>';
+            document.getElementById('deleteModalMessage').innerHTML = '';
+            document.getElementById('deleteModalMessage').appendChild(loadingMsg);
+            
+            let deleted = 0;
+            let errors = 0;
+            
+            for (const id of pendingDeleteIds) {
+                try {
+                    await database.ref(`attendance/${id}`).remove();
+                    deleted++;
+                } catch(e) {
+                    errors++;
+                    console.error(e);
+                }
+            }
+            
+            closeDeleteModal();
+            alert(`تم حذف ${deleted} سجل بنجاح. ${errors > 0 ? `فشل حذف ${errors} سجل.` : ''}`);
+            
+            // Reload data
+            await loadInitialData();
+            loadEmployeeAttendance();
+        }
+        
+        document.getElementById('deleteSelectedBtn').onclick = () => {
+            const ids = getSelectedRecordIds();
+            if (ids.length === 0) {
+                alert('لم تختر أي سجل للحذف');
+                return;
+            }
+            showDeleteModal(ids, `هل أنت متأكد من حذف ${ids.length} سجل حضور؟ هذا الإجراء لا يمكن التراجع عنه.`);
+        };
+        
+        document.getElementById('deleteSelectedBottomBtn').onclick = () => {
+            const ids = getSelectedRecordIds();
+            if (ids.length === 0) {
+                alert('لم تختر أي سجل للحذف');
+                return;
+            }
+            showDeleteModal(ids, `هل أنت متأكد من حذف ${ids.length} سجل حضور؟ هذا الإجراء لا يمكن التراجع عنه.`);
+        };
+        
+        document.getElementById('deleteAllDuplicatesBtn').onclick = () => {
+            const duplicateIds = [];
+            document.querySelectorAll('.record-checkbox').forEach(cb => {
+                const row = cb.closest('tr');
+                if (row && row.classList.contains('duplicate-row')) {
+                    duplicateIds.push(cb.value);
+                }
+            });
+            if (duplicateIds.length === 0) {
+                alert('لا توجد سجلات مكررة');
+                return;
+            }
+            showDeleteModal(duplicateIds, `سيتم حذف ${duplicateIds.length} سجل مكرر. هل أنت متأكد؟`);
+        };
+        
+        document.getElementById('confirmDeleteBtn').onclick = executeDelete;
+        
+        // Event listeners
+        document.getElementById('loadBtn').onclick = loadEmployeeAttendance;
+        document.getElementById('monthFilter').value = new Date().toISOString().slice(0, 7);
+        
+        // Initialize
+        loadInitialData();
+        
+        // Close modal on escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeDeleteModal();
+        });
+    </script>
+</body>
+</html>
